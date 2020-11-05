@@ -37,7 +37,7 @@ def get_transform(train=True):
 
 def random_crop(LR, HR):
     # Patch Size
-    PATCH_SIZE = 256
+    PATCH_SIZE = 128
     H, W = LR.shape[1:]
     h = random.randint(0, H - PATCH_SIZE)
     w = random.randint(0, W - PATCH_SIZE)

@@ -30,6 +30,9 @@ if __name__ == "__main__":
                         default="models/ImageZoom.pth", help="checkpint file")
     parser.add_argument('--input', type=str,
                         default="dataset/predict/LR/*.png", help="input image")
+    parser.add_argument('--output', type=str,
+                        default="dataset/predict/HR", help="output directory")
+
     args = parser.parse_args()
 
     # CPU or GPU ?
@@ -60,4 +63,4 @@ if __name__ == "__main__":
             output_tensor = model(input_tensor).clamp(0, 1.0).squeeze()
 
         toimage(output_tensor.cpu()).save(
-            "dataset/predict/HR/{}".format(os.path.basename(filename)))
+            "{}/{}".format(args.output, os.path.basename(filename)))

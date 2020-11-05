@@ -5,7 +5,12 @@ import numpy as np
 import torch
 import RRDBNet_arch as arch
 
-model_path = 'models/RRDB_ESRGAN_x4.pth'  # models/RRDB_ESRGAN_x4.pth OR models/RRDB_PSNR_x4.pth
+# models/interp_08.pth models/RRDB_ESRGAN_x4.pth OR models/RRDB_PSNR_x4.pth
+model_path = 'models/interp_08.pth'
+model_path = 'models/RRDB_ESRGAN_x4.pth'
+model_path = 'models/RRDB_PSNR_x4.pth'
+
+
 device = torch.device('cuda')  # if you want to run on CPU, change 'cuda' -> cpu
 # device = torch.device('cpu')
 

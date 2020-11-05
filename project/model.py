@@ -20,11 +20,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm import tqdm
 
+from torch.utils.checkpoint import checkpoint_sequential
+# https://mathpretty.com/11156.html
+
 import pdb
 
 # The following comes from https://github.com/xinntao/ESRGAN
 # Thanks a lot.
-
 
 def make_layer(block, n_layers):
     layers = []
@@ -44,9 +46,6 @@ class ResidualDenseBlock_5C(nn.Module):
         self.conv5 = nn.Conv2d(nf + 4 * gc, nf, 3, 1, 1, bias=bias)
         self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
-        # initialization
-        # mutil.initialize_weights([self.conv1, self.conv2, self.conv3, self.conv4, self.conv5], 0.1)
-
     def forward(self, x):
         x1 = self.lrelu(self.conv1(x))
         x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
@@ -54,8 +53,7 @@ class ResidualDenseBlock_5C(nn.Module):
         x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
         x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
         del x1, x2, x3, x4
-        torch.cuda.empty_cache() 
-
+        torch.cuda.empty_cache()
         return x5 * 0.2 + x
 
 
@@ -72,17 +70,13 @@ class RRDB(nn.Module):
         out = self.RDB1(x)
         out = self.RDB2(out)
         out = self.RDB3(out)
-        out = out * 0.2 + x
-        del x
-        torch.cuda.empty_cache() 
-
-        return out
+        return out * 0.2 + x
 
 class ImageZoomModel(nn.Module):
     """ImageZoom Model."""
 
     def __init__(self, in_nc, out_nc, nf, nb, gc=32):
-        """Init model."""
+        """Init model. default: 3, 3, 64, 23, gc=32 """
         super(ImageZoomModel, self).__init__()
         RRDB_block_f = functools.partial(RRDB, nf=nf, gc=gc)
 
@@ -100,18 +94,15 @@ class ImageZoomModel(nn.Module):
     def forward(self, x):
         """Forward."""
         fea = self.conv_first(x)
-        trunk = self.trunk_conv(self.RRDB_trunk(fea))
-        fea = fea + trunk
-        del x, trunk
-        torch.cuda.empty_cache() 
+        # trunk = self.trunk_conv(self.RRDB_trunk(fea))
+        trunk = checkpoint_sequential(self.RRDB_trunk, 2, fea.requires_grad_(True))
+        trunk = self.trunk_conv(trunk)
 
-        fea = self.lrelu(self.upconv1(F.interpolate(
-            fea, scale_factor=2, mode='nearest')))
-        fea = self.lrelu(self.upconv2(F.interpolate(
-            fea, scale_factor=2, mode='nearest')))
+        fea = fea + trunk
+        fea = self.lrelu(self.upconv1(F.interpolate(fea, scale_factor=2, mode='nearest')))
+        fea = self.lrelu(self.upconv2(F.interpolate(fea, scale_factor=2, mode='nearest')))
         out = self.conv_last(self.lrelu(self.HRconv(fea)))
-        del fea
-        torch.cuda.empty_cache()
+
         return out
 
 def PSNR(img1, img2):
@@ -233,8 +224,6 @@ def train_epoch(loader, model, optimizer, device, tag=''):
 
             predicts = model(images)
 
-            # pdb.set_trace()
-
             loss = criterion(predicts, targets)
             loss_value = loss.item()
 
@@ -248,18 +237,16 @@ def train_epoch(loader, model, optimizer, device, tag=''):
             # Update loss
             total_loss.update(loss_value, count)
 
-            t.set_postfix(loss='{:.6f}'.format(total_loss.avg))
+            t.set_postfix(loss='L1Loss: {:.6f}'.format(total_loss.avg))
             t.update(count)
 
             # Optimizer
             optimizer.zero_grad()
-            if os.environ["ENABLE_APEX"] == "YES":
-                from apex import amp
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
+            loss.backward()
             optimizer.step()
+
+            del loss
+            torch.cuda.empty_cache()
 
         return total_loss.avg
 
@@ -293,7 +280,7 @@ def valid_epoch(loader, model, device, tag=''):
 
 
             valid_loss.update(loss_value, count)
-            t.set_postfix(loss='{:.6f}'.format(valid_loss.avg))
+            t.set_postfix(loss='PSNR: {:.6f}'.format(valid_loss.avg))
             t.update(count)
 
 
