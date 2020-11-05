@@ -9,14 +9,16 @@
 # ***
 # ************************************************************************************/
 #
-import os
-import glob
 import argparse
+import glob
+import os
+
 import torch
 import torchvision.transforms as transforms
 from PIL import Image
-from model import get_model, model_load, model_setenv
 from tqdm import tqdm
+
+from model import get_model, model_load, model_setenv
 
 if __name__ == "__main__":
     """Predict."""
@@ -24,8 +26,10 @@ if __name__ == "__main__":
     model_setenv()
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--checkpoint', type=str, default="output/ImageZoom.pth", help="checkpint file")
-    parser.add_argument('--input', type=str, required=True, help="input image")
+    parser.add_argument('--checkpoint', type=str,
+                        default="models/ImageZoom.pth", help="checkpint file")
+    parser.add_argument('--input', type=str,
+                        default="dataset/predict/LR/*.png", help="input image")
     args = parser.parse_args()
 
     # CPU or GPU ?
@@ -37,13 +41,14 @@ if __name__ == "__main__":
     model.eval()
 
     if os.environ["ENABLE_APEX"] == "YES":
-        model, = amp.initialize(model, opt_level="O1")
+        from apex import amp
+        model = amp.initialize(model, opt_level="O1")
 
     totensor = transforms.ToTensor()
     toimage = transforms.ToPILImage()
 
     image_filenames = glob.glob(args.input)
-    progress_bar = tqdm(total = len(image_filenames))
+    progress_bar = tqdm(total=len(image_filenames))
 
     for index, filename in enumerate(image_filenames):
         progress_bar.update(1)
@@ -54,5 +59,5 @@ if __name__ == "__main__":
         with torch.no_grad():
             output_tensor = model(input_tensor).clamp(0, 1.0).squeeze()
 
-        # xxxx--modify here
-        toimage(output_tensor.cpu()).show()
+        toimage(output_tensor.cpu()).save(
+            "dataset/predict/HR/{}".format(os.path.basename(filename)))

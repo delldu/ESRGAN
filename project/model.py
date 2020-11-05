@@ -10,23 +10,115 @@
 # ************************************************************************************/
 #
 
+import functools
+import math
 import os
 import sys
-import math
+
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from tqdm import tqdm
+
+import pdb
+
+# The following comes from https://github.com/xinntao/ESRGAN
+# Thanks a lot.
+
+
+def make_layer(block, n_layers):
+    layers = []
+    for _ in range(n_layers):
+        layers.append(block())
+    return nn.Sequential(*layers)
+
+
+class ResidualDenseBlock_5C(nn.Module):
+    def __init__(self, nf=64, gc=32, bias=True):
+        super(ResidualDenseBlock_5C, self).__init__()
+        # gc: growth channel, i.e. intermediate channels
+        self.conv1 = nn.Conv2d(nf, gc, 3, 1, 1, bias=bias)
+        self.conv2 = nn.Conv2d(nf + gc, gc, 3, 1, 1, bias=bias)
+        self.conv3 = nn.Conv2d(nf + 2 * gc, gc, 3, 1, 1, bias=bias)
+        self.conv4 = nn.Conv2d(nf + 3 * gc, gc, 3, 1, 1, bias=bias)
+        self.conv5 = nn.Conv2d(nf + 4 * gc, nf, 3, 1, 1, bias=bias)
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
+
+        # initialization
+        # mutil.initialize_weights([self.conv1, self.conv2, self.conv3, self.conv4, self.conv5], 0.1)
+
+    def forward(self, x):
+        x1 = self.lrelu(self.conv1(x))
+        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
+        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
+        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
+        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
+        del x1, x2, x3, x4
+        torch.cuda.empty_cache() 
+
+        return x5 * 0.2 + x
+
+
+class RRDB(nn.Module):
+    '''Residual in Residual Dense Block'''
+
+    def __init__(self, nf, gc=32):
+        super(RRDB, self).__init__()
+        self.RDB1 = ResidualDenseBlock_5C(nf, gc)
+        self.RDB2 = ResidualDenseBlock_5C(nf, gc)
+        self.RDB3 = ResidualDenseBlock_5C(nf, gc)
+
+    def forward(self, x):
+        out = self.RDB1(x)
+        out = self.RDB2(out)
+        out = self.RDB3(out)
+        out = out * 0.2 + x
+        del x
+        torch.cuda.empty_cache() 
+
+        return out
 
 class ImageZoomModel(nn.Module):
     """ImageZoom Model."""
 
-    def __init__(self):
+    def __init__(self, in_nc, out_nc, nf, nb, gc=32):
         """Init model."""
         super(ImageZoomModel, self).__init__()
+        RRDB_block_f = functools.partial(RRDB, nf=nf, gc=gc)
+
+        self.conv_first = nn.Conv2d(in_nc, nf, 3, 1, 1, bias=True)
+        self.RRDB_trunk = make_layer(RRDB_block_f, nb)
+        self.trunk_conv = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        # upsampling
+        self.upconv1 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.upconv2 = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.HRconv = nn.Conv2d(nf, nf, 3, 1, 1, bias=True)
+        self.conv_last = nn.Conv2d(nf, out_nc, 3, 1, 1, bias=True)
+
+        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
     def forward(self, x):
         """Forward."""
-        return x
+        fea = self.conv_first(x)
+        trunk = self.trunk_conv(self.RRDB_trunk(fea))
+        fea = fea + trunk
+        del x, trunk
+        torch.cuda.empty_cache() 
+
+        fea = self.lrelu(self.upconv1(F.interpolate(
+            fea, scale_factor=2, mode='nearest')))
+        fea = self.lrelu(self.upconv2(F.interpolate(
+            fea, scale_factor=2, mode='nearest')))
+        out = self.conv_last(self.lrelu(self.HRconv(fea)))
+        del fea
+        torch.cuda.empty_cache()
+        return out
+
+def PSNR(img1, img2):
+    """PSNR."""
+    difference = (1.*img1-img2)**2
+    mse = torch.sqrt(torch.mean(difference)) + 0.000001
+    return 20*torch.log10(1./mse)
 
 def model_load(model, path):
     """Load model."""
@@ -46,6 +138,7 @@ def model_load(model, path):
 def model_save(model, path):
     """Save model."""
     torch.save(model.state_dict(), path)
+
 
 def model_export():
     """Export model to onnx."""
@@ -67,15 +160,15 @@ def model_export():
     print("Export model ...")
     # xxxx--modify here
     dummy_input = torch.randn(1, 3, 512, 512)
-    input_names = [ "input" ]
-    output_names = [ "output" ]
+    input_names = ["input"]
+    output_names = ["output"]
     torch.onnx.export(model, dummy_input, onnx_file,
-                    input_names=input_names, 
-                    output_names=output_names,
-                    verbose=True,
-                    opset_version=11,
-                    keep_initializers_as_inputs=True,
-                    export_params=True)
+                      input_names=input_names,
+                      output_names=output_names,
+                      verbose=True,
+                      opset_version=11,
+                      keep_initializers_as_inputs=True,
+                      export_params=True)
 
     # 3. Optimize model
     print('Checking model ...')
@@ -83,7 +176,8 @@ def model_export():
     onnx.checker.check_model(model)
 
     print("Optimizing model ...")
-    passes = ["extract_constant_to_initializer", "eliminate_unused_initializer"]
+    passes = ["extract_constant_to_initializer",
+              "eliminate_unused_initializer"]
     optimized_model = optimizer.optimize(model, passes)
     onnx.save(optimized_model, onnx_file)
 
@@ -93,7 +187,7 @@ def model_export():
 
 def get_model():
     """Create model."""
-    model = ImageZoomModel()
+    model = ImageZoomModel(3, 3, 64, 23, gc=32)
     return model
 
 
@@ -123,8 +217,8 @@ def train_epoch(loader, model, optimizer, device, tag=''):
     """Trainning model ..."""
 
     total_loss = Counter()
-
     model.train()
+    criterion = nn.L1Loss()
 
     with tqdm(total=len(loader.dataset)) as t:
         t.set_description(tag)
@@ -139,10 +233,14 @@ def train_epoch(loader, model, optimizer, device, tag=''):
 
             predicts = model(images)
 
-            # xxxx--modify here
-            loss = nn.L1Loss(predicts, targets)
+            # pdb.set_trace()
 
+            loss = criterion(predicts, targets)
             loss_value = loss.item()
+
+            del images, targets, predicts
+            torch.cuda.empty_cache()
+
             if not math.isfinite(loss_value):
                 print("Loss is {}, stopping training".format(loss_value))
                 sys.exit(1)
@@ -188,7 +286,12 @@ def valid_epoch(loader, model, device, tag=''):
             with torch.no_grad():
                 predicts = model(images)
 
-            # xxxx--modify here
+            loss_value = PSNR(targets, predicts)
+
+            del images, targets, predicts
+            torch.cuda.empty_cache()
+
+
             valid_loss.update(loss_value, count)
             t.set_postfix(loss='{:.6f}'.format(valid_loss.avg))
             t.update(count)
@@ -211,7 +314,6 @@ def model_setenv():
 
     if os.environ.get("DEVICE") != "YES" and os.environ.get("DEVICE") != "NO":
         os.environ["DEVICE"] = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 
     # Is there GPU ?
     if not torch.cuda.is_available():
@@ -248,25 +350,26 @@ def infer_perform():
     model_setenv()
     device = os.environ["DEVICE"]
 
-    model = ImageZoomModel()
+    model = get_model()
     model.eval()
     model = model.to(device)
 
-    with tqdm(total=len(1000)) as t:
-        t.set_description(tag)
+    if os.environ["ENABLE_APEX"] == "YES":
+        from apex import amp
+        model = amp.initialize(model, opt_level="O1")
+    print(model)
 
-        # xxxx--modify here
-        input = torch.randn(64, 3, 512, 512)
+    for i in tqdm(range(10)):
+        input = torch.randn(2, 3, 512, 512)
         input = input.to(device)
 
         with torch.no_grad():
             output = model(input)
 
-        t.update(1)
-
+        del input, output
 
 if __name__ == '__main__':
     """Test model ..."""
 
-    model_export()
+    # model_export()
     infer_perform()

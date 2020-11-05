@@ -10,12 +10,15 @@
 # ************************************************************************************/
 #
 
-import os
 import argparse
+import os
+
 import torch
 import torch.optim as optim
+
 from data import get_data
-from model import get_model, model_load, model_save, train_epoch, valid_epoch, model_setenv
+from model import (get_model, model_load, model_save, model_setenv,
+                   train_epoch, valid_epoch)
 
 if __name__ == "__main__":
     """Trainning model."""
@@ -25,7 +28,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--outputdir', type=str, default="output", help="output directory")
     parser.add_argument('--checkpoint', type=str, default="output/ImageZoom.pth", help="checkpoint file")
-    parser.add_argument('--bs', type=int, default=8, help="batch size")
+    parser.add_argument('--bs', type=int, default=1, help="batch size")
     parser.add_argument('--lr', type=float, default=1e-4, help="learning rate")
     parser.add_argument('--epochs', type=int, default=10)
     args = parser.parse_args()
@@ -65,5 +68,5 @@ if __name__ == "__main__":
         lr_scheduler.step()
 
         # xxxx--modify here
-        if epoch == (args.epochs // 2) or (epoch == args.epochs - 1):
-            model_save(model, os.path.join(args.outputdir, "latest-checkpoint.pth"))
+        # if epoch == (args.epochs // 2) or (epoch == args.epochs - 1):
+        #     model_save(model, os.path.join(args.outputdir, "latest-checkpoint.pth"))
