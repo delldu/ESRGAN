@@ -12,25 +12,24 @@
 
 import argparse
 import os
+import pdb
 
 import torch
 import torch.optim as optim
 
 from data import get_data
-from model import (get_model, model_load, model_save, model_setenv,
+from model import (get_model, model_device, model_load, model_save,
                    train_epoch, valid_epoch)
-
-import pdb
 
 if __name__ == "__main__":
     """Trainning model."""
-    
-    model_setenv()    
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--outputdir', type=str, default="output", help="output directory")
-    parser.add_argument('--checkpoint', type=str, default="models/ImageZoom.pth", help="checkpoint file")
-    parser.add_argument('--bs', type=int, default=4, help="batch size")
+    parser.add_argument('--outputdir', type=str,
+                        default="output", help="output directory")
+    parser.add_argument('--checkpoint', type=str,
+                        default="models/ImageZoom.pth", help="checkpoint file")
+    parser.add_argument('--bs', type=int, default=2, help="batch size")
     parser.add_argument('--lr', type=float, default=1e-4, help="learning rate")
     parser.add_argument('--epochs', type=int, default=100)
     args = parser.parse_args()
@@ -39,25 +38,26 @@ if __name__ == "__main__":
     if not os.path.exists(args.outputdir):
         os.makedirs(args.outputdir)
 
-    # CPU or GPU ?
-    device = torch.device(os.environ["DEVICE"])
-
     # get model
     model = get_model()
     model_load(model, args.checkpoint)
+    device = model_device()
     model.to(device)
     print(model)
 
     # construct optimizer and learning rate scheduler,
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = optim.SGD(params, lr=args.lr, momentum=0.9, weight_decay=0.0005)
-    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.1)
+    optimizer = optim.SGD(params, lr=args.lr,
+                          momentum=0.9, weight_decay=0.0005)
+    lr_scheduler = optim.lr_scheduler.StepLR(
+        optimizer, step_size=100, gamma=0.1)
 
     # get data loader
     train_dl, valid_dl = get_data(trainning=True, bs=args.bs)
 
     for epoch in range(args.epochs):
-        print("Epoch {}/{}, learning rate: {} ...".format(epoch + 1, args.epochs, lr_scheduler.get_last_lr()))
+        print("Epoch {}/{}, learning rate: {} ...".format(epoch +
+                                                          1, args.epochs, lr_scheduler.get_last_lr()))
 
         train_epoch(train_dl, model, optimizer, device, tag='train')
 

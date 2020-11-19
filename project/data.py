@@ -9,15 +9,13 @@
 # ***
 # ************************************************************************************/
 #
-import random
-
 import os
+import random
 
 import torch
 import torch.utils.data as data
 import torchvision.transforms as T
 import torchvision.utils as utils
-
 from PIL import Image
 
 train_dataset_rootdir = "dataset/train/"
@@ -35,6 +33,7 @@ def get_transform(train=True):
     ts.append(T.ToTensor())
     return T.Compose(ts)
 
+
 def random_crop(LR, HR):
     # Patch Size
     PATCH_SIZE = 128
@@ -42,6 +41,7 @@ def random_crop(LR, HR):
     h = random.randint(0, H - PATCH_SIZE)
     w = random.randint(0, W - PATCH_SIZE)
     return LR[:, h:h+PATCH_SIZE, w:w+PATCH_SIZE], HR[:, 4*h:4*(h+PATCH_SIZE), 4*w:4*(w+PATCH_SIZE)]
+
 
 class ImageZoomDataset(data.Dataset):
     """Define dataset."""

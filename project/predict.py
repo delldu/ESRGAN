@@ -18,12 +18,10 @@ import torchvision.transforms as transforms
 from PIL import Image
 from tqdm import tqdm
 
-from model import get_model, model_load, model_setenv
+from model import enable_amp, get_model, model_device, model_load
 
 if __name__ == "__main__":
     """Predict."""
-
-    model_setenv()
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', type=str,
@@ -35,17 +33,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # CPU or GPU ?
-    device = torch.device(os.environ["DEVICE"])
-
     model = get_model()
     model_load(model, args.checkpoint)
+    device = model_device()
     model.to(device)
     model.eval()
 
-    if os.environ["ENABLE_APEX"] == "YES":
-        from apex import amp
-        model = amp.initialize(model, opt_level="O1")
+    enable_amp(model)
 
     totensor = transforms.ToTensor()
     toimage = transforms.ToPILImage()
@@ -60,7 +54,13 @@ if __name__ == "__main__":
         input_tensor = totensor(image).unsqueeze(0).to(device)
 
         with torch.no_grad():
-            output_tensor = model(input_tensor).clamp(0, 1.0).squeeze()
+            output_tensor = model(input_tensor)
+
+        output_tensor.clamp_(0, 1.0)
+        output_tensor = output_tensor.squeeze(0)
 
         toimage(output_tensor.cpu()).save(
             "{}/{}".format(args.output, os.path.basename(filename)))
+
+        del input_tensor, output_tensor
+        torch.cuda.empty_cache()

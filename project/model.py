@@ -13,17 +13,18 @@
 import functools
 import math
 import os
+import pdb
 import sys
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from apex import amp
+from torch.utils.checkpoint import checkpoint_sequential
 from tqdm import tqdm
 
-from torch.utils.checkpoint import checkpoint_sequential
 # https://mathpretty.com/11156.html
 
-import pdb
 
 # The following comes from https://github.com/xinntao/ESRGAN
 # Thanks a lot.
@@ -72,6 +73,7 @@ class RRDB(nn.Module):
         out = self.RDB3(out)
         return out * 0.2 + x
 
+
 class ImageZoomModel(nn.Module):
     """ImageZoom Model."""
 
@@ -95,21 +97,26 @@ class ImageZoomModel(nn.Module):
         """Forward."""
         fea = self.conv_first(x)
         # trunk = self.trunk_conv(self.RRDB_trunk(fea))
-        trunk = checkpoint_sequential(self.RRDB_trunk, 2, fea.requires_grad_(True))
+        trunk = checkpoint_sequential(
+            self.RRDB_trunk, 2, fea.requires_grad_(True))
         trunk = self.trunk_conv(trunk)
 
         fea = fea + trunk
-        fea = self.lrelu(self.upconv1(F.interpolate(fea, scale_factor=2, mode='nearest')))
-        fea = self.lrelu(self.upconv2(F.interpolate(fea, scale_factor=2, mode='nearest')))
+        fea = self.lrelu(self.upconv1(F.interpolate(
+            fea, scale_factor=2, mode='nearest')))
+        fea = self.lrelu(self.upconv2(F.interpolate(
+            fea, scale_factor=2, mode='nearest')))
         out = self.conv_last(self.lrelu(self.HRconv(fea)))
 
         return out
+
 
 def PSNR(img1, img2):
     """PSNR."""
     difference = (1.*img1-img2)**2
     mse = torch.sqrt(torch.mean(difference)) + 0.000001
     return 20*torch.log10(1./mse)
+
 
 def model_load(model, path):
     """Load model."""
@@ -131,35 +138,39 @@ def model_save(model, path):
     torch.save(model.state_dict(), path)
 
 
-def model_export():
-    """Export model to onnx."""
+def export_onnx_model():
+    """Export onnx model."""
 
     import onnx
     from onnx import optimizer
 
-    # xxxx--modify here
-    onnx_file = "model.onnx"
-    weight_file = "checkpoint/weight.pth"
+    onnx_file = "output/image_zoom.onnx"
+    weight_file = "output/ImageZoom.pth"
 
     # 1. Load model
     print("Loading model ...")
-    model = ImageZoomModel()
+    model = get_model()
     model_load(model, weight_file)
     model.eval()
 
     # 2. Model export
     print("Export model ...")
-    # xxxx--modify here
     dummy_input = torch.randn(1, 3, 512, 512)
+
     input_names = ["input"]
-    output_names = ["output"]
+    output_names = ["noise_level", "output"]
+    # variable lenght axes
+    dynamic_axes = {'input': {0: 'batch_size', 1: 'channel', 2: "height", 3: 'width'},
+                    'noise_level': {0: 'batch_size', 1: 'channel', 2: "height", 3: 'width'},
+                    'output': {0: 'batch_size', 1: 'channel', 2: "height", 3: 'width'}}
     torch.onnx.export(model, dummy_input, onnx_file,
                       input_names=input_names,
                       output_names=output_names,
                       verbose=True,
                       opset_version=11,
                       keep_initializers_as_inputs=True,
-                      export_params=True)
+                      export_params=True,
+                      dynamic_axes=dynamic_axes)
 
     # 3. Optimize model
     print('Checking model ...')
@@ -173,11 +184,31 @@ def model_export():
     onnx.save(optimized_model, onnx_file)
 
     # 4. Visual model
-    # python -c "import netron; netron.start('model.onnx')"
+    # python -c "import netron; netron.start('image_clean.onnx')"
+
+
+def export_torch_model():
+    """Export torch model."""
+
+    script_file = "output/image_zoom.pt"
+    weight_file = "output/ImageZoom.pth"
+
+    # 1. Load model
+    print("Loading model ...")
+    model = get_model()
+    model_load(model, weight_file)
+    model.eval()
+
+    # 2. Model export
+    print("Export model ...")
+    dummy_input = torch.randn(1, 3, 512, 512)
+    traced_script_module = torch.jit.trace(model, dummy_input)
+    traced_script_module.save(script_file)
 
 
 def get_model():
     """Create model."""
+    model_setenv()
     model = ImageZoomModel(3, 3, 64, 23, gc=32)
     return model
 
@@ -278,10 +309,14 @@ def valid_epoch(loader, model, device, tag=''):
             del images, targets, predicts
             torch.cuda.empty_cache()
 
-
             valid_loss.update(loss_value, count)
             t.set_postfix(loss='PSNR: {:.6f}'.format(valid_loss.avg))
             t.update(count)
+
+
+def model_device():
+    """First call model_setenv. """
+    return torch.device(os.environ["DEVICE"])
 
 
 def model_setenv():
@@ -310,10 +345,7 @@ def model_setenv():
     if os.environ.get("ONLY_USE_CPU") == "YES":
         os.environ["ENABLE_APEX"] = "NO"
     else:
-        try:
-            from apex import amp
-        except:
-            os.environ["ENABLE_APEX"] = "NO"
+        os.environ["ENABLE_APEX"] = "YES"
 
     # Running on GPU if available
     if os.environ.get("ONLY_USE_CPU") == "YES":
@@ -331,19 +363,21 @@ def model_setenv():
     print("  ENABLE_APEX: ", os.environ["ENABLE_APEX"])
 
 
+def enable_amp(x):
+    """Init Automatic Mixed Precision(AMP)."""
+    if os.environ["ENABLE_APEX"] == "YES":
+        x = amp.initialize(x, opt_level="O1")
+
+
 def infer_perform():
     """Model infer performance ..."""
 
-    model_setenv()
-    device = os.environ["DEVICE"]
-
     model = get_model()
+    device = model_device()
+
     model.eval()
     model = model.to(device)
-
-    if os.environ["ENABLE_APEX"] == "YES":
-        from apex import amp
-        model = amp.initialize(model, opt_level="O1")
+    enable_amp(model)
     print(model)
 
     for i in tqdm(range(10)):
@@ -355,8 +389,14 @@ def infer_perform():
 
         del input, output
 
+
 if __name__ == '__main__':
     """Test model ..."""
 
-    # model_export()
+    model = get_model()
+    print(model)
+
+    export_torch_model()
+    export_onnx_model()
+
     infer_perform()
