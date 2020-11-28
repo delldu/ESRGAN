@@ -96,9 +96,9 @@ class ImageZoomModel(nn.Module):
     def forward(self, x):
         """Forward."""
         fea = self.conv_first(x)
-        # trunk = self.trunk_conv(self.RRDB_trunk(fea))
-        trunk = checkpoint_sequential(
-            self.RRDB_trunk, 2, fea.requires_grad_(True))
+        trunk = self.trunk_conv(self.RRDB_trunk(fea))
+        # trunk = checkpoint_sequential(
+        #     self.RRDB_trunk, 2, fea.requires_grad_(True))
         trunk = self.trunk_conv(trunk)
 
         fea = fea + trunk
@@ -144,8 +144,8 @@ def export_onnx_model():
     import onnx
     from onnx import optimizer
 
-    onnx_file = "output/image_zoom.onnx"
-    weight_file = "output/ImageZoom.pth"
+    onnx_file = "models/image_zoom.onnx"
+    weight_file = "models/ImageZoom.pth"
 
     # 1. Load model
     print("Loading model ...")
@@ -190,8 +190,8 @@ def export_onnx_model():
 def export_torch_model():
     """Export torch model."""
 
-    script_file = "output/image_zoom.pt"
-    weight_file = "output/ImageZoom.pth"
+    script_file = "models/image_zoom.pt"
+    weight_file = "models/ImageZoom.pth"
 
     # 1. Load model
     print("Loading model ...")
@@ -201,7 +201,7 @@ def export_torch_model():
 
     # 2. Model export
     print("Export model ...")
-    dummy_input = torch.randn(1, 3, 512, 512)
+    dummy_input = torch.randn(1, 3, 256, 256)
     traced_script_module = torch.jit.trace(model, dummy_input)
     traced_script_module.save(script_file)
 
@@ -397,6 +397,6 @@ if __name__ == '__main__':
     print(model)
 
     export_torch_model()
-    export_onnx_model()
+    # export_onnx_model()
 
-    infer_perform()
+    # infer_perform()
