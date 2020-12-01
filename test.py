@@ -8,7 +8,7 @@ import RRDBNet_arch as arch
 # models/interp_08.pth models/RRDB_ESRGAN_x4.pth OR models/RRDB_PSNR_x4.pth
 model_path = 'models/interp_08.pth'
 model_path = 'models/RRDB_ESRGAN_x4.pth'
-model_path = 'models/RRDB_PSNR_x4.pth'
+# model_path = 'models/RRDB_PSNR_x4.pth'
 
 
 device = torch.device('cuda')  # if you want to run on CPU, change 'cuda' -> cpu
@@ -24,7 +24,7 @@ model = model.to(device)
 print('Model path {:s}. \nTesting...'.format(model_path))
 
 idx = 0
-for path in glob.glob(test_img_folder):
+for path in sorted(glob.glob(test_img_folder)):
     idx += 1
     base = osp.splitext(osp.basename(path))[0]
     print(idx, base)

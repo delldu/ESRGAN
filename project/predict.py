@@ -29,22 +29,24 @@ if __name__ == "__main__":
     parser.add_argument('--input', type=str,
                         default="dataset/predict/LR/*.png", help="input image")
     parser.add_argument('--output', type=str,
-                        default="dataset/predict/HR", help="output directory")
+                        default="output", help="output directory")
 
     args = parser.parse_args()
 
     model = get_model()
     model_load(model, args.checkpoint)
+    # model.load_state_dict(torch.load(args.checkpoint), strict=True)
+    
     device = model_device()
     model.to(device)
     model.eval()
 
-    enable_amp(model)
+    # enable_amp(model)
 
     totensor = transforms.ToTensor()
     toimage = transforms.ToPILImage()
 
-    image_filenames = glob.glob(args.input)
+    image_filenames = sorted(glob.glob(args.input))
     progress_bar = tqdm(total=len(image_filenames))
 
     for index, filename in enumerate(image_filenames):

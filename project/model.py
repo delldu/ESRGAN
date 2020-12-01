@@ -23,6 +23,8 @@ from apex import amp
 from torch.utils.checkpoint import checkpoint_sequential
 from tqdm import tqdm
 
+import pdb
+
 # https://mathpretty.com/11156.html
 
 
@@ -99,7 +101,7 @@ class ImageZoomModel(nn.Module):
         trunk = self.trunk_conv(self.RRDB_trunk(fea))
         # trunk = checkpoint_sequential(
         #     self.RRDB_trunk, 2, fea.requires_grad_(True))
-        trunk = self.trunk_conv(trunk)
+        # trunk = self.trunk_conv(trunk)
 
         fea = fea + trunk
         fea = self.lrelu(self.upconv1(F.interpolate(
@@ -124,8 +126,10 @@ def model_load(model, path):
         print("Model '{}' does not exist.".format(path))
         return
 
+    print("model load weights from {} ...".format(path))
     state_dict = torch.load(path, map_location=lambda storage, loc: storage)
     target_state_dict = model.state_dict()
+
     for n, p in state_dict.items():
         if n in target_state_dict.keys():
             target_state_dict[n].copy_(p)
@@ -209,6 +213,7 @@ def export_torch_model():
 def get_model():
     """Create model."""
     model_setenv()
+    # RRDBNet(3, 3, 64, 23, gc=32)
     model = ImageZoomModel(3, 3, 64, 23, gc=32)
     return model
 
